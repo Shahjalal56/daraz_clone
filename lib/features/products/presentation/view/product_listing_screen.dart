@@ -3,29 +3,10 @@
 //
 // [1] SINGLE VERTICAL SCROLL OWNER
 //     NestedScrollView owns ALL vertical scrolling.
-//     - Outer scroll: collapses/expands the SliverAppBar (banner)
-//     - Inner scroll: the product list per tab
-//     There is NO second ScrollController anywhere.
-//
-// [2] STICKY TAB BAR
-//     TabBar sits in SliverAppBar's `bottom` property.
-//     `forceElevated: innerBoxIsScrolled` makes it stay visible
-//     (adds elevation/shadow) once the banner collapses.
-//
-// [3] HORIZONTAL SWIPE (TabBarView)
-//     TabBarView uses PageView internally → PageView claims
-//     HorizontalDragGestureRecognizer. Flutter's gesture arena
-//     automatically separates H-drag (→ tab switch) vs V-drag
-//     (→ NestedScrollView). No manual GestureDetector needed.
-//
-// [4] NO SCROLL RESET ON TAB SWITCH
-//     AutomaticKeepAliveClientMixin keeps each tab's CustomScrollView
-//     alive in memory. PageStorageKey stores scroll offset per tab.
-//
-// [5] PULL-TO-REFRESH
-//     RefreshIndicator wraps each CustomScrollView.
-//     edgeOffset = kTabBarHeight so the spinner appears below the
-//     pinned tab bar, not hidden behind it.
+// [2] STICKY TAB BAR via SliverAppBar bottom + forceElevated
+// [3] HORIZONTAL SWIPE via TabBarView (PageView) — gesture arena handles H/V split
+// [4] NO SCROLL RESET — AutomaticKeepAliveClientMixin + PageStorageKey
+// [5] PULL-TO-REFRESH — RefreshIndicator with edgeOffset = _kTabBarHeight
 // ═══════════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
@@ -36,9 +17,11 @@ import '../../../auth/presentation/view_model/auth_view_model.dart';
 import '../view_model/product_view_model.dart';
 import '../widget/product_card_widget.dart';
 
-// expandedHeight = FlexibleSpaceBar area only (tab bar is added separately via `bottom`)
-// Keep this value = actual banner content height to avoid overflow
-const _kBannerHeight = 170.0;
+// expandedHeight = height of the FlexibleSpaceBar (collapsible banner area).
+// SliverAppBar will additionally show kToolbarHeight for the toolbar row
+// and _kTabBarHeight for the bottom tab bar.
+// Total visible when expanded = kToolbarHeight(56) + _kExpandedHeight(200) + _kTabBarHeight(46)
+const _kExpandedHeight = 200.0;
 const _kTabBarHeight = 46.0;
 
 const _tabs = [
@@ -104,7 +87,7 @@ class _ProductListingScreenState extends State<ProductListingScreen>
   List<Widget> _buildHeader(BuildContext context, bool innerBoxIsScrolled) {
     return [
       SliverAppBar(
-        expandedHeight: _kBannerHeight,
+        expandedHeight: _kExpandedHeight,
         floating: false,
         pinned: false,
         snap: false,
@@ -127,8 +110,8 @@ class _ProductListingScreenState extends State<ProductListingScreen>
           ),
           SizedBox(width: 4.w),
         ],
-        // FlexibleSpaceBar renders inside expandedHeight area
         flexibleSpace: const FlexibleSpaceBar(
+          collapseMode: CollapseMode.none,
           background: _BannerWidget(),
         ),
         bottom: PreferredSize(
@@ -192,8 +175,8 @@ class _ProductListingScreenState extends State<ProductListingScreen>
                             fontSize: 18.sp,
                             fontWeight: FontWeight.w700)),
                     Text(user.email,
-                        style:
-                        TextStyle(color: Colors.white70, fontSize: 13.sp)),
+                        style: TextStyle(
+                            color: Colors.white70, fontSize: 13.sp)),
                   ],
                 ],
               ),
@@ -202,8 +185,8 @@ class _ProductListingScreenState extends State<ProductListingScreen>
               leading: Icon(Icons.person_outline,
                   color: const Color(0xFFFF6000), size: 22.sp),
               title: Text('Profile',
-                  style:
-                  TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w600)),
+                  style: TextStyle(
+                      fontSize: 14.sp, fontWeight: FontWeight.w600)),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.pushNamed(context, RouteNames.profile);
@@ -235,16 +218,16 @@ class _ProductListingScreenState extends State<ProductListingScreen>
 }
 
 // ── Banner Widget ─────────────────────────────────────────────────────────────
-// IMPORTANT: This widget renders inside FlexibleSpaceBar which is constrained
-// to exactly `expandedHeight`. Do NOT use SafeArea or large padding here —
-// it causes RenderFlex overflow. Instead use top padding to push content
-// below the AppBar toolbar (kToolbarHeight ≈ 56).
+// KEY RULE: No SafeArea inside FlexibleSpaceBar — it causes overflow.
+// Use Align(bottomLeft) + mainAxisSize.min so content sticks to the bottom
+// of the expanded area and never overflows regardless of screen size.
 class _BannerWidget extends StatelessWidget {
   const _BannerWidget();
 
   @override
   Widget build(BuildContext context) {
     final user = context.watch<AuthViewModel>().user;
+
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -253,47 +236,54 @@ class _BannerWidget extends StatelessWidget {
           end: Alignment.bottomRight,
         ),
       ),
-      // Padding top = toolbar height so content sits below the back/menu icons
-      padding: EdgeInsets.fromLTRB(16.w, kToolbarHeight + 4.h, 16.w, 12.h),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.end,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (user != null)
-            Text(
-              'Hi, ${user.firstName}! 👋',
-              style: TextStyle(color: Colors.white70, fontSize: 13.sp),
-            ),
-          SizedBox(height: 2.h),
-          Text(
-            'Discover Products',
-            style: TextStyle(
-                color: Colors.white,
-                fontSize: 20.sp,
-                fontWeight: FontWeight.w800),
-          ),
-          SizedBox(height: 8.h),
-          // Search bar
-          Container(
-            height: 40.h,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(10.r),
-            ),
-            child: Row(
-              children: [
-                SizedBox(width: 12.w),
-                Icon(Icons.search, color: Colors.grey.shade400, size: 20.sp),
-                SizedBox(width: 8.w),
+      child: Align(
+        alignment: Alignment.bottomLeft,
+        child: Padding(
+          // left/right/bottom padding only — no top padding needed
+          // because Align.bottomLeft positions content at the bottom
+          padding: EdgeInsets.fromLTRB(16.w, 0, 16.w, 18.h),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (user != null)
                 Text(
-                  'Search for products...',
-                  style:
-                  TextStyle(color: Colors.grey.shade400, fontSize: 13.sp),
+                  'Hi, ${user.firstName}! 👋',
+                  style: TextStyle(color: Colors.white70, fontSize: 13.sp),
                 ),
-              ],
-            ),
+              SizedBox(height: 4.h),
+              Text(
+                'Discover Products',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20.sp,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              SizedBox(height: 10.h),
+              Container(
+                height: 44.h,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10.r),
+                ),
+                child: Row(
+                  children: [
+                    SizedBox(width: 12.w),
+                    Icon(Icons.search,
+                        color: Colors.grey.shade400, size: 20.sp),
+                    SizedBox(width: 8.w),
+                    Text(
+                      'Search for products...',
+                      style: TextStyle(
+                          color: Colors.grey.shade400, fontSize: 13.sp),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -389,8 +379,8 @@ class _ProductTabBodyState extends State<_ProductTabBody>
           SizedBox(height: 12.h),
           Text(msg,
               textAlign: TextAlign.center,
-              style:
-              TextStyle(color: Colors.red.shade700, fontSize: 13.sp)),
+              style: TextStyle(
+                  color: Colors.red.shade700, fontSize: 13.sp)),
           SizedBox(height: 16.h),
           ElevatedButton(
             onPressed: () => context
@@ -402,8 +392,7 @@ class _ProductTabBodyState extends State<_ProductTabBody>
                   borderRadius: BorderRadius.circular(10.r)),
             ),
             child: Text('Retry',
-                style:
-                TextStyle(color: Colors.white, fontSize: 14.sp)),
+                style: TextStyle(color: Colors.white, fontSize: 14.sp)),
           ),
         ],
       ),
@@ -415,7 +404,6 @@ class _ProductTabBodyState extends State<_ProductTabBody>
   );
 }
 
-// Shimmer placeholder card
 class _ShimmerCard extends StatefulWidget {
   @override
   State<_ShimmerCard> createState() => _ShimmerCardState();
